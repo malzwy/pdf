@@ -1,0 +1,6 @@
+{
+  "name": "Layout-Preserving PDF Translator",
+  "description": "Translate text within a PDF document while preserving the original layout.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
