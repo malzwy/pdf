@@ -29,8 +29,14 @@ async function startServer() {
   // Increase body limit for passing HTML string back and forth
   app.use(express.json({ limit: "50mb" }));
 
+  app.use((req, res, next) => {
+    console.log(`[REQUEST] ${req.method} ${req.url}`);
+    next();
+  });
+
   // Step 1: Extract HTML and fragments
   app.post("/api/translate-pdf-step1", (req, res, next) => {
+    console.log("Entering step1 handler");
     upload.single("file")(req, res, (err) => {
       if (err) {
         console.error("Multer error:", err);
@@ -102,7 +108,7 @@ async function startServer() {
       res.json({ jobId, fragments });
     } catch (error) {
       console.error("PDF-to-HTML Backend Step 1 Error:", error);
-      res.status(500).json({ error: "Internal Server Error" });
+      res.status(500).json({ error: "Internal Server Error", details: error instanceof Error ? error.message : String(error) });
     }
   });
 
@@ -111,7 +117,8 @@ async function startServer() {
     try {
       const { jobId, translatedFragments } = req.body;
       if (!jobId || !translatedFragments) {
-        res.status(400).json({ error: "Missing required fields" });
+        console.error("Missing fields in step2", req.body);
+        res.status(400).json({ error: "Missing required fields", received: Object.keys(req.body) });
         return;
       }
 

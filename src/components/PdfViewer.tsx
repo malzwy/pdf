@@ -5,7 +5,7 @@ import 'react-pdf/dist/Page/TextLayer.css';
 import { Loader2, ChevronLeft, ChevronRight, Languages } from 'lucide-react';
 import { cn } from '../lib/utils';
 import ReactMarkdown from 'react-markdown';
-import { translatePageImage } from '../services/translator';
+import { translatePageImage, translateTextFragments } from '../services/translator';
 
 // Set up worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
@@ -137,7 +137,7 @@ export function PdfViewer({ file, targetLanguage }: PdfPageProps) {
 
     } catch (error) {
       console.error("Backend rendering error:", error);
-      alert("Backend processing failed. Please check server logs.");
+      alert("Backend processing failed: " + (error instanceof Error ? error.message : String(error)));
     } finally {
       setIsTranslating(false);
     }
