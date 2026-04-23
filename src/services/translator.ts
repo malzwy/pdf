@@ -86,9 +86,17 @@ export async function translateTextFragments(
 ): Promise<Record<number, string>> {
   if (Object.keys(fragments).length === 0) return {};
 
-  const prompt = `You are an expert translator. 
+  const prompt = `You are a world-class document translator specializing in complex PDF structures (tables, sidebars, charts).
 
-YOUR OBJECTIVE: Translate the following text fragments into: "${targetLanguage}".
+YOUR OBJECTIVE: Translate the following text fragments.
+
+CRITICAL INSTRUCTIONS FOR STRUCTURAL ELEMENTS:
+1. TABLES: If a fragment contains tabular data (delimited by row/column structures conceptually), you MUST output it as a valid Markdown Table. Do not break the table row-by-row; translate the semantic block.
+2. SIDEBARS/BOXES: Treat these as complete semantic units. Maintain their cohesive message. Do not split sentences arbitrarily within these boxes.
+3. GENERAL: Output strictly in the target language: "${targetLanguage}".
+   - Keep structural formatting (headings, lists) intact.
+   - For simple text, translate fluently.
+
 Input JSON:
 ${JSON.stringify(fragments)}`;
 

@@ -91,13 +91,21 @@ async function startServer() {
       }
 
       const $ = cheerio.load(htmlContent);
-      const textNodes = $(".t").toArray();
-      
       const fragments: Record<number, string> = {};
-      textNodes.forEach((node, index) => {
+      let idCounter = 0;
+
+      // New: Smart-batching strategy
+      // 1. Identify tables and group them
+      $('table').each((_, table) => {
+        fragments[idCounter++] = $(table).text().trim();
+        $(table).remove(); // Already processed
+      });
+
+      // 2. Process remaining text nodes
+      $(".t").each((_, node) => {
         const text = $(node).text().trim();
         if (text) {
-          fragments[index] = text;
+          fragments[idCounter++] = text;
         }
       });
 
