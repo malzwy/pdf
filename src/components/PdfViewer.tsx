@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 import { Loader2, ChevronLeft, ChevronRight, Languages } from 'lucide-react';
-import { translatePageImage } from '../services/translator';
 import { cn } from '../lib/utils';
 import ReactMarkdown from 'react-markdown';
+import { translatePageImage } from '../services/translator';
 
 // Set up worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
@@ -20,15 +20,19 @@ export function PdfViewer({ file, targetLanguage }: PdfPageProps) {
   const [pageNumber, setPageNumber] = useState(1);
   const [scale, setScale] = useState(1.5);
   const [isTranslating, setIsTranslating] = useState(false);
-  const [viewMode, setViewMode] = useState<'original' | 'split'>('original');
+  const [viewMode, setViewMode] = useState<'original' | 'split' | 'server-html'>('original');
   
   // Track OCR Markdown translations per page
   const [markdownTranslations, setMarkdownTranslations] = useState<Record<number, string>>({});
+
+  // Rendered Backend Cheerio HTML Blob URL
+  const [translatedHtmlUrl, setTranslatedHtmlUrl] = useState<string | null>(null);
 
   const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
     setNumPages(numPages);
     setPageNumber(1);
     setMarkdownTranslations({});
+    setTranslatedHtmlUrl(null);
     setViewMode('original');
   };
 
@@ -38,7 +42,6 @@ export function PdfViewer({ file, targetLanguage }: PdfPageProps) {
       const pdf = await pdfjs.getDocument(arrayBuffer).promise;
       const page = await pdf.getPage(pageNum);
       
-      // Render at a high resolution for OCR
       const viewport = page.getViewport({ scale: 2.0 });
       const canvas = document.createElement('canvas');
       const canvasContext = canvas.getContext('2d');
@@ -59,10 +62,8 @@ export function PdfViewer({ file, targetLanguage }: PdfPageProps) {
     }
   };
 
-  const handleTranslatePage = async () => {
+  const handleTranslatePageOCR = async () => {
     if (!targetLanguage || isTranslating) return;
-    
-    // If we already have translations for this page, just switch to split view
     if (markdownTranslations[pageNumber]) {
       setViewMode('split');
       return;
@@ -81,13 +82,74 @@ export function PdfViewer({ file, targetLanguage }: PdfPageProps) {
     }
   };
 
-  // When language changes, clear translations
+  // Node.js Backend 4-Step architecture payload run
+  const handleTranslatePageBackend = async () => {
+    if (!targetLanguage || isTranslating) return;
+    
+    setIsTranslating(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      // Step 1: Backend parses PDF to HTML and extracts text fragments
+      const responseStep1 = await fetch('/api/translate-pdf-step1', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!responseStep1.ok) {
+        const errText = await responseStep1.text();
+        console.error("Step 1 failed with text:", errText);
+        throw new Error('Failed to extract HTML and text from PDF');
+      }
+      
+      const rawRes = await responseStep1.text();
+      let step1Data;
+      try {
+        step1Data = JSON.parse(rawRes);
+      } catch (e) {
+        console.error("Step 1 returned invalid JSON. Raw response start:", rawRes.slice(0, 200));
+        throw new Error("Invalid response from server");
+      }
+
+      const { jobId, fragments } = step1Data;
+
+      // Step 2: Client translates fragments using Gemini API (via AI Studio Proxy)
+      const translatedFragments = await translateTextFragments(fragments, targetLanguage);
+
+      // Step 3: Backend injects translated fragments into HTML using job context
+      const responseStep2 = await fetch('/api/translate-pdf-step2', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId, translatedFragments }),
+      });
+
+      if (!responseStep2.ok) {
+        throw new Error('Failed to inject translations into HTML');
+      }
+
+      const finalHtmlText = await responseStep2.text();
+      const blob = new Blob([finalHtmlText], { type: 'text/html' });
+      const blobUrl = URL.createObjectURL(blob);
+
+      setTranslatedHtmlUrl(blobUrl);
+      setViewMode('server-html');
+
+    } catch (error) {
+      console.error("Backend rendering error:", error);
+      alert("Backend processing failed. Please check server logs.");
+    } finally {
+      setIsTranslating(false);
+    }
+  };
+
   useEffect(() => {
     setMarkdownTranslations({});
+    setTranslatedHtmlUrl(null);
     setViewMode('original');
-  }, [targetLanguage]);
+  }, [targetLanguage, file]);
 
-  const hasTranslation = !!markdownTranslations[pageNumber];
+  const hasTranslation = !!markdownTranslations[pageNumber] || translatedHtmlUrl;
 
   return (
     <div className="flex flex-col items-center w-full max-w-full mx-auto h-full">
@@ -112,22 +174,32 @@ export function PdfViewer({ file, targetLanguage }: PdfPageProps) {
           </button>
         </div>
         
-        {hasTranslation && (
-          <div className="flex items-center bg-gray-100 p-1 rounded-lg">
-             <button
-              onClick={() => setViewMode('original')}
-              className={cn("px-4 py-1.5 text-sm font-medium rounded-md transition-colors", viewMode === 'original' ? 'bg-white shadow-sm' : 'text-gray-500 hover:text-gray-700')}
-            >
-              Original PDF
-            </button>
-            <button
-              onClick={() => setViewMode('split')}
-              className={cn("px-4 py-1.5 text-sm font-medium rounded-md transition-colors", viewMode === 'split' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700')}
-            >
-              OCR Reflow & Translate
-            </button>
-          </div>
-        )}
+        <div className="flex items-center bg-gray-100 p-1 rounded-lg">
+           <button
+            onClick={() => setViewMode('original')}
+            className={cn("px-4 py-1.5 text-sm font-medium rounded-md transition-colors", viewMode === 'original' ? 'bg-white shadow-sm' : 'text-gray-500 hover:text-gray-700')}
+          >
+            Original PDF
+          </button>
+          
+          <button
+            onClick={markdownTranslations[pageNumber] ? () => setViewMode('split') : handleTranslatePageOCR}
+            disabled={isTranslating}
+            className={cn("px-4 py-1.5 text-sm font-medium rounded-md transition-colors", viewMode === 'split' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700 disabled:opacity-50')}
+          >
+            {isTranslating && viewMode !== 'server-html' ? <Loader2 size={16} className="animate-spin inline mr-1" /> : null}
+            OCR Split Reflow
+          </button>
+
+          <button
+            onClick={translatedHtmlUrl ? () => setViewMode('server-html') : handleTranslatePageBackend}
+            disabled={isTranslating}
+            className={cn("px-4 py-1.5 text-sm font-medium rounded-md transition-colors", viewMode === 'server-html' ? 'bg-white shadow-sm text-green-600' : 'text-gray-500 hover:text-gray-700 disabled:opacity-50')}
+          >
+             {isTranslating && viewMode === 'server-html' ? <Loader2 size={16} className="animate-spin inline mr-1" /> : null}
+             Server HTML Mode
+          </button>
+        </div>
 
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 bg-gray-100 p-1 rounded-lg">
@@ -141,15 +213,6 @@ export function PdfViewer({ file, targetLanguage }: PdfPageProps) {
               className="px-3 py-1 rounded hover:bg-white transition-colors text-sm font-medium"
             >+</button>
           </div>
-
-          <button
-            onClick={handleTranslatePage}
-            disabled={isTranslating || (hasTranslation && viewMode === 'split')}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors font-medium shadow-sm whitespace-nowrap"
-          >
-            {isTranslating ? <Loader2 size={18} className="animate-spin" /> : <Languages size={18} />}
-            {hasTranslation ? 'Re-translate' : 'Translate Page'}
-          </button>
         </div>
       </div>
 
@@ -175,9 +238,12 @@ export function PdfViewer({ file, targetLanguage }: PdfPageProps) {
               />
             </Document>
           </div>
-        ) : (
+        ) : viewMode === 'server-html' && translatedHtmlUrl ? (
+           <div className="w-full h-full bg-white"> 
+              <iframe src={translatedHtmlUrl} className="w-full h-full min-h-[85vh] border-0" title="Backend Rendered HTML" />
+           </div>
+        ) : viewMode === 'split' ? (
           <div className="flex w-full min-w-max p-6 gap-8 justify-center items-start">
-            {/* Original PDF on the left */}
             <div className="flex flex-col drop-shadow-xl bg-white">
               <Document
                 file={file}
@@ -193,11 +259,9 @@ export function PdfViewer({ file, targetLanguage }: PdfPageProps) {
               </Document>
             </div>
             
-            {/* Markdown Reflow View on the right */}
             <div 
               className="flex-none bg-white drop-shadow-xl p-10 overflow-auto"
               style={{
-                /* Match the width and height somewhat closely to the PDF rendering */
                 width: `${750 * scale}px`,
                 minHeight: `${1000 * scale}px`
               }}
@@ -209,6 +273,10 @@ export function PdfViewer({ file, targetLanguage }: PdfPageProps) {
               </div>
             </div>
           </div>
+        ) : (
+           <div className="flex items-center justify-center h-full text-gray-500">
+             <Loader2 className="animate-spin w-8 h-8 mr-2" /> Processing translation...
+           </div>
         )}
       </div>
     </div>

@@ -108,11 +108,12 @@ export default function App() {
             <div className="mt-12 flex items-start gap-4 p-4 bg-orange-50 rounded-xl max-w-2xl text-orange-800">
               <FileText className="shrink-0 mt-0.5" size={20} />
               <div>
-                <h3 className="font-semibold mb-1">How it works</h3>
+                <h3 className="font-semibold mb-1">Dual Translation Architectures</h3>
+                <p className="text-sm opacity-90 leading-relaxed mb-2">
+                  <strong className="text-blue-700">1. OCR Split Reflow:</strong> Passes visual captures to Gemini 2.5 Flash Vision to extract text and natural structure, rendering side-by-side in Markdown. Completely eliminates boundary overlapping glitches.
+                </p>
                 <p className="text-sm opacity-90 leading-relaxed">
-                  This tool renders the PDF page visually and passes the image directly to Google's Gemini 2.5 Flash Multimodal Vision model. 
-                  The AI acts as both an OCR engine and translator, extracting the text structure and reflowing the translated output into beautiful Markdown.
-                  This completely circumvents traditional PDF "overlapping text" visual glitches, allowing languages of vastly different lengths to be read side-by-side cleanly.
+                   <strong className="text-green-700">2. Server HTML Mode (pdf2htmlEX PoC):</strong> Utilizes a Node.js Express backend and Cheerio to parse HTML DOM structures mathematically. Ready for local deployment with `pdf2htmlEX` to retain 100% of underlying background visuals!
                 </p>
               </div>
             </div>
