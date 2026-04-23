@@ -2,6 +2,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || 'AI_STUDIO_DUMMY_KEY' });
 
+
 export async function translatePageImage(
   base64Image: string,
   targetLanguage: string
@@ -43,6 +44,41 @@ This approach resolves text overlap by allowing the translated text to naturally
   }
 }
 
+async function callModel(prompt: string, config?: { isJson: boolean }): Promise<string> {
+  const localEndpoint = import.meta.env.VITE_LOCAL_MODEL_ENDPOINT;
+  const localModelName = import.meta.env.VITE_LOCAL_MODEL_NAME;
+
+  if (localEndpoint && localModelName) {
+    try {
+      const response = await fetch(`${localEndpoint}/chat/completions`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer placeholder' // OpenAI compatibility requires auth header usually
+        },
+        body: JSON.stringify({
+          model: localModelName,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.1,
+          stream: false,
+        }),
+      });
+      const data = await response.json();
+      return data.choices[0].message.content;
+    } catch (e) {
+      console.error("OpenAI-compatible local model failed, falling back to Gemini:", e);
+    }
+  }
+
+  // Fallback to Gemini
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-flash',
+    contents: prompt,
+    config: config?.isJson ? { responseMimeType: 'application/json' } : {},
+  });
+  return response.text || '{}';
+}
+
 // Keeping the old one just in case, though we will pivot to OCR reflow
 export async function translateTextFragments(
   fragments: Record<number, string>,
@@ -52,56 +88,15 @@ export async function translateTextFragments(
 
   const prompt = `You are an expert translator. 
 
-YOUR OBJECTIVE: Translate the following text fragments from a PDF document into exactly this target language: "${targetLanguage}".
-CRITICAL: You MUST translate into "${targetLanguage}". Do not output Chinese unless "${targetLanguage}" is Chinese.
-
-The input is a JSON object where keys are sequential indices and values are text fragments from a single page in reading order.
-
-CRITICAL RULES FOR PDF LAYOUT PRESERVATION:
-PDFs often break sentences across multiple lines or fragments to fit the page structure (columns, paragraphs, margins).
-To perfectly preserve this visual layout, you MUST translate the full sentence logically, but then DISTRIBUTE the translated text back into the original fragment keys.
-
-Rules for distribution:
-1. Identify the full sentence spanning multiple fragments.
-2. Translate the entire sentence logically and fluently into ${targetLanguage}.
-3. Split the translated sentence proportionally and place the parts back into their original corresponding keys.
-4. Try to make the length of the translated fragments visually proportional to the original fragments.
-5. Do NOT leave any keys empty unless the original was empty.
-6. The output JSON must have the EXACT SAME set of keys as the input.
-
-Example of Distribution Concept:
-If a sentence spans indices "1" and "2", translate it as a whole to "${targetLanguage}", then place the first half of the translation in key "1" and the second half in key "2". Do NOT put everything in key "1" and leave "2" empty.
-
-OTHER RULES:
-- Preserve structural spaces, newlines, and bullet points at the start of fragments.
-- Keep numbers, product names, acronyms, and pure symbols exactly as they are.
-- DO NOT ADD OR REMOVE KEYS.
-
+YOUR OBJECTIVE: Translate the following text fragments into: "${targetLanguage}".
 Input JSON:
 ${JSON.stringify(fragments)}`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-      },
-    });
-
-    const resultText = response.text || '{}';
-    console.log("Gemini Raw Response:", resultText);
-    const translated = JSON.parse(resultText);
-
-    // Ensure all keys are present and fallback to original if missing
-    const finalResult: Record<number, string> = {};
-    for (const key in fragments) {
-      finalResult[key] = translated[key] !== undefined ? translated[key] : fragments[key];
-    }
-    return finalResult;
+    const resultText = await callModel(prompt, { isJson: true });
+    return JSON.parse(resultText);
   } catch (error) {
-    console.error("Translation API error caught:");
-    console.error(error);
-    return fragments; // Fallback to original on error
+    console.error("Translation API error caught:", error);
+    return fragments; // Fallback to original
   }
 }
